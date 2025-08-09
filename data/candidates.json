@@ -1,0 +1,30 @@
+[
+  {
+    "id": "1754773495214",
+    "fullName": "Anura Damayantha",
+    "email": "anura.icon.fi@gmail.com",
+    "phone": "0417285547",
+    "timezone": "Europe/Helsinki",
+    "experience": "",
+    "motivation": "",
+    "additionalNotes": "",
+    "selectedSlots": [
+      "2025-08-12-16:00"
+    ],
+    "createdAt": "2025-08-09T21:04:55.214Z"
+  },
+  {
+    "id": "1754773512505",
+    "fullName": "Anura Damayantha",
+    "email": "anura.pitumpe@edu.karelia.fi",
+    "phone": "0442491813",
+    "timezone": "Europe/Helsinki",
+    "experience": "",
+    "motivation": "",
+    "additionalNotes": "",
+    "selectedSlots": [
+      "2025-08-12-16:00"
+    ],
+    "createdAt": "2025-08-09T21:05:12.505Z"
+  }
+]
