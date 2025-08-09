@@ -23,9 +23,9 @@
       "date": "2025-08-12",
       "time": "16:30",
       "day": "Monday",
-      "taken": false,
-      "takenBy": null,
-      "takenAt": null
+      "taken": true,
+      "takenBy": "1754780430781",
+      "takenAt": "2025-08-09T23:00:30.782Z"
     },
     {
       "id": "2025-08-12-16:45",

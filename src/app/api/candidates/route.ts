@@ -1,81 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
-import fs from 'fs/promises'
-import path from 'path'
-
-const DATA_FILE = path.join(process.cwd(), 'data', 'candidates.json')
-const TIME_SLOTS_FILE = path.join(process.cwd(), 'data', 'time-slots.json')
+import pool from '@/lib/db'
+import { initializeDatabase, populateTimeSlots } from '@/lib/db'
 
 interface CandidateData {
-  fullName: string
+  candidate_id: string
+  full_name: string
   email: string
-  phone: string
+  phone: string | null
   timezone: string
-  experience: string
-  motivation: string
-  additionalNotes: string
-  selectedSlots: string[]
-  id: string
-  createdAt: string
+  experience: string | null
+  motivation: string | null
+  additional_notes: string | null
+  created_at: string
 }
 
-interface TimeSlot {
-  id: string
-  date: string
-  time: string
-  day: string
-  taken: boolean
-  takenBy: string | null
-  takenAt: string | null
-}
+// Initialize database on first API call
+let dbInitialized = false
 
-interface TimeSlotsData {
-  timeSlots: TimeSlot[]
-}
-
-// Ensure data directory exists
-async function ensureDataDirectory() {
-  const dataDir = path.dirname(DATA_FILE)
-  try {
-    await fs.access(dataDir)
-  } catch {
-    await fs.mkdir(dataDir, { recursive: true })
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initializeDatabase()
+    await populateTimeSlots()
+    dbInitialized = true
   }
-}
-
-// Read existing candidates
-async function readCandidates(): Promise<CandidateData[]> {
-  await ensureDataDirectory()
-  try {
-    const data = await fs.readFile(DATA_FILE, 'utf-8')
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-// Write candidates to file
-async function writeCandidates(candidates: CandidateData[]): Promise<void> {
-  await ensureDataDirectory()
-  await fs.writeFile(DATA_FILE, JSON.stringify(candidates, null, 2))
-}
-
-// Read time slots
-async function readTimeSlots(): Promise<TimeSlotsData> {
-  try {
-    const data = await fs.readFile(TIME_SLOTS_FILE, 'utf-8')
-    return JSON.parse(data)
-  } catch {
-    return { timeSlots: [] }
-  }
-}
-
-// Write time slots
-async function writeTimeSlots(data: TimeSlotsData): Promise<void> {
-  await fs.writeFile(TIME_SLOTS_FILE, JSON.stringify(data, null, 2))
 }
 
 export async function POST(request: NextRequest) {
   try {
+    await ensureDbInitialized()
+    
     const body = await request.json()
     
     // Validate required fields
@@ -98,77 +51,108 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Read existing candidates
-    const candidates = await readCandidates()
+    // Start transaction
+    const client = await pool.connect()
     
-    // Check for duplicate email
-    const existingCandidate = candidates.find(c => c.email === body.email)
-    if (existingCandidate) {
-      return NextResponse.json(
-        { error: 'A candidate with this email already exists' },
-        { status: 409 }
+    try {
+      await client.query('BEGIN')
+
+      // Check for duplicate email
+      const existingCandidate = await client.query(
+        'SELECT candidate_id FROM candidates WHERE email = $1',
+        [body.email]
       )
-    }
+      
+      if (existingCandidate.rows.length > 0) {
+        await client.query('ROLLBACK')
+        return NextResponse.json(
+          { error: 'A candidate with this email already exists' },
+          { status: 409 }
+        )
+      }
 
-    // Create candidate object first to get ID
-    const candidate: CandidateData = {
-      id: Date.now().toString(),
-      fullName: body.fullName,
-      email: body.email,
-      phone: body.phone || '',
-      timezone: body.timezone,
-      experience: body.experience || '',
-      motivation: body.motivation || '',
-      additionalNotes: body.additionalNotes || '',
-      selectedSlots: body.selectedSlots,
-      createdAt: new Date().toISOString()
-    }
+      // Check if selected slots are available
+      const selectedSlotIds = body.selectedSlots as string[]
+      const slotCheckQuery = `
+        SELECT slot_id, taken 
+        FROM time_slots 
+        WHERE slot_id = ANY($1::text[])
+        FOR UPDATE
+      `
+      
+      const slotResult = await client.query(slotCheckQuery, [selectedSlotIds])
+      
+      if (slotResult.rows.length !== selectedSlotIds.length) {
+        await client.query('ROLLBACK')
+        return NextResponse.json(
+          { error: 'Some selected time slots do not exist' },
+          { status: 400 }
+        )
+      }
 
-    // Read time slots and check availability
-    const timeSlotsData = await readTimeSlots()
-    const availableSlots = timeSlotsData.timeSlots.filter(slot => !slot.taken)
-    
-    // Check if selected slots are available
-    const selectedSlotIds = body.selectedSlots as string[]
-    const unavailableSlots = selectedSlotIds.filter(slotId => 
-      !availableSlots.some(slot => slot.id === slotId)
-    )
-    
-    if (unavailableSlots.length > 0) {
+      const unavailableSlots = slotResult.rows.filter(row => row.taken)
+      if (unavailableSlots.length > 0) {
+        await client.query('ROLLBACK')
+        return NextResponse.json(
+          { 
+            error: 'Some selected time slots are no longer available',
+            unavailableSlots: unavailableSlots.map(row => row.slot_id)
+          },
+          { status: 409 }
+        )
+      }
+
+      // Generate candidate ID
+      const candidateId = Date.now().toString()
+
+      // Insert candidate
+      await client.query(`
+        INSERT INTO candidates (
+          candidate_id, full_name, email, phone, timezone, 
+          experience, motivation, additional_notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [
+        candidateId,
+        body.fullName,
+        body.email,
+        body.phone || null,
+        body.timezone,
+        body.experience || null,
+        body.motivation || null,
+        body.additionalNotes || null
+      ])
+
+      // Insert candidate-slot relationships and mark slots as taken
+      for (const slotId of selectedSlotIds) {
+        await client.query(
+          'INSERT INTO candidate_slots (candidate_id, slot_id) VALUES ($1, $2)',
+          [candidateId, slotId]
+        )
+        
+        await client.query(
+          `UPDATE time_slots 
+           SET taken = TRUE, taken_by = $1, taken_at = CURRENT_TIMESTAMP 
+           WHERE slot_id = $2`,
+          [candidateId, slotId]
+        )
+      }
+
+      await client.query('COMMIT')
+
       return NextResponse.json(
         { 
-          error: 'Some selected time slots are no longer available',
-          unavailableSlots 
+          message: 'Candidate created successfully',
+          candidateId: candidateId,
+          bookedSlots: selectedSlotIds.length
         },
-        { status: 409 }
+        { status: 201 }
       )
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
     }
-
-    // Mark selected slots as taken
-    selectedSlotIds.forEach(slotId => {
-      const slot = timeSlotsData.timeSlots.find(s => s.id === slotId)
-      if (slot && !slot.taken) {
-        slot.taken = true
-        slot.takenBy = candidate.id
-        slot.takenAt = new Date().toISOString()
-      }
-    })
-    
-    // Save updated time slots
-    await writeTimeSlots(timeSlotsData)
-
-    // Add candidate and save
-    candidates.push(candidate)
-    await writeCandidates(candidates)
-
-    return NextResponse.json(
-      { 
-        message: 'Candidate created successfully',
-        candidateId: candidate.id,
-        bookedSlots: selectedSlotIds.length
-      },
-      { status: 201 }
-    )
   } catch (error) {
     console.error('Error creating candidate:', error)
     return NextResponse.json(
@@ -180,7 +164,44 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   try {
-    const candidates = await readCandidates()
+    await ensureDbInitialized()
+    
+    const result = await pool.query(`
+      SELECT 
+        c.candidate_id as id,
+        c.full_name as fullName,
+        c.email,
+        c.phone,
+        c.timezone,
+        c.experience,
+        c.motivation,
+        c.additional_notes as additionalNotes,
+        c.created_at as createdAt,
+        COALESCE(
+          ARRAY_AGG(ts.slot_id) FILTER (WHERE ts.slot_id IS NOT NULL),
+          ARRAY[]::text[]
+        ) as selectedSlots
+      FROM candidates c
+      LEFT JOIN candidate_slots cs ON c.candidate_id = cs.candidate_id
+      LEFT JOIN time_slots ts ON cs.slot_id = ts.slot_id
+      GROUP BY c.candidate_id, c.full_name, c.email, c.phone, c.timezone, 
+               c.experience, c.motivation, c.additional_notes, c.created_at
+      ORDER BY c.created_at DESC
+    `)
+
+    const candidates = result.rows.map(row => ({
+      id: row.id,
+      fullName: row.fullname,
+      email: row.email,
+      phone: row.phone,
+      timezone: row.timezone,
+      experience: row.experience,
+      motivation: row.motivation,
+      additionalNotes: row.additionalnotes,
+      selectedSlots: row.selectedslots,
+      createdAt: row.createdat
+    }))
+
     return NextResponse.json(candidates)
   } catch (error) {
     console.error('Error reading candidates:', error)
