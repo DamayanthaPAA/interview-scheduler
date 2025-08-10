@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 
 const pool = new Pool({
   user: 'avnadmin',
-  user: 'AVNS_te8ruMzMCOYjk5tYke8',
+  password: 'AVNS_te8ruMzMCOYjk5tYke8',
   host: 'pg-1dd676ae-anura-2218.j.aivencloud.com',
   port: 11962,
   database: 'defaultdb',

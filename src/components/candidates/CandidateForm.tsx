@@ -55,6 +55,7 @@ export default function CandidateForm() {
     const fetchAvailableSlots = async () => {
       try {
         const response = await fetch('/api/time-slots')
+        console.log('Fetched time slots:', response);
         if (response.ok) {
           const data = await response.json()
           setAvailableSlots(data.availableSlots)
