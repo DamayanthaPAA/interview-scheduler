@@ -30,8 +30,24 @@ interface CandidateData {
   createdAt: string
 }
 
+interface TimeSlotData {
+  id: string
+  date: string
+  time: string
+  day: string
+  taken: boolean
+  takenBy: string | null
+  takenAt: string | null
+}
+
+interface ApiResponse {
+  candidate: CandidateData
+  timeSlots: TimeSlotData[]
+}
+
 export default function CandidateDetailPage() {
   const [candidate, setCandidate] = useState<CandidateData | null>(null)
+  const [timeSlots, setTimeSlots] = useState<TimeSlotData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const params = useParams()
@@ -45,8 +61,9 @@ export default function CandidateDetailPage() {
         if (!response.ok) {
           throw new Error('Candidate not found')
         }
-        const data = await response.json()
-        setCandidate(data)
+        const data: ApiResponse = await response.json()
+        setCandidate(data.candidate)
+        setTimeSlots(data.timeSlots)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch candidate')
       } finally {
@@ -67,30 +84,15 @@ export default function CandidateDetailPage() {
     })
   }
 
-  const formatSlotTime = (slotId: string) => {
-    // Parse the slot ID which is in format "YYYY-MM-DD-HH:mm"
-    const [date, time] = slotId.split('-')
-    const year = parseInt(date.substring(0, 4))
-    const month = parseInt(date.substring(5, 7)) - 1 // JavaScript months are 0-indexed
-    const day = parseInt(date.substring(8, 10))
-    const hour = parseInt(time.substring(0, 2))
-    const minute = parseInt(time.substring(3, 5))
-    
-    const dateObj = new Date(year, month, day, hour, minute)
-    
+  const formatSlotTime = (slot: TimeSlotData) => {
+    const dateObj = new Date(slot.date)
     const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' })
     const formattedDate = dateObj.toLocaleDateString('en-US', {
       month: 'short',
-      day: 'numeric', 
+      day: 'numeric',
       year: 'numeric'
     })
-    const formattedTime = dateObj.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    })
-    
-    return `${dayName}, ${formattedDate} at ${formattedTime}`
+    return `${dayName}, ${formattedDate} at ${slot.time}`
   }
 
   if (loading) {
@@ -114,9 +116,9 @@ export default function CandidateDetailPage() {
             </div>
             <h2 className="text-xl font-semibold text-gray-800 mb-2">Candidate Not Found</h2>
             <p className="text-gray-600 mb-4">{error || 'The candidate you are looking for does not exist.'}</p>
-            <Button onClick={() => router.push('/')}>
+            <Button onClick={() => router.push('/candidates')}>
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Home
+              Back to Candidates
             </Button>
           </CardContent>
         </Card>
@@ -131,11 +133,11 @@ export default function CandidateDetailPage() {
         <div className="mb-8">
           <Button 
             variant="ghost" 
-            onClick={() => router.push('/')}
+            onClick={() => router.push('/candidates')}
             className="mb-4"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Home
+            Back to Candidates
           </Button>
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
@@ -229,19 +231,24 @@ export default function CandidateDetailPage() {
                 Selected Interview Time Slots
               </CardTitle>
               <CardDescription>
-                {candidate.selectedSlots.length} time slot(s) selected
+                {timeSlots.length} time slot(s) selected
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {candidate.selectedSlots.map((slotId, index) => (
-                  <div key={slotId} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                {timeSlots.map((slot, index) => (
+                  <div key={slot.id} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     <Badge variant="secondary" className="mb-2">
                       Slot {index + 1}
                     </Badge>
                     <p className="text-sm font-medium text-blue-800">
-                      {formatSlotTime(slotId)}
+                      {formatSlotTime(slot)}
                     </p>
+                    {slot.takenAt && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Booked on {new Date(slot.takenAt).toLocaleDateString()}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
